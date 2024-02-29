@@ -739,8 +739,12 @@ void generate(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler, 
         exit(EXIT_FAILURE);
     }
 
+    // Print length of tokenized prompt.
+    fprintf(stderr, "# of prompt tokens: %d\n", num_prompt_tokens);
+
     // start the main loop
     long start = 0;  // used to time our code, only initialized after first iteration
+    long ctx = 0;    // used to time context-encoding
     int next;        // will store the next token in the sequence
     int token = prompt_tokens[0]; // kick off with the first token in the prompt
     int pos = 0;     // position in the sequence
@@ -755,6 +759,7 @@ void generate(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler, 
             next = prompt_tokens[pos + 1];
         } else {
             // otherwise sample the next token from the logits
+            if (ctx == 0) { ctx = time_in_ms(); }
             next = sample(sampler, logits);
         }
         pos++;
@@ -764,8 +769,8 @@ void generate(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler, 
 
         // print the token as string, decode it with the Tokenizer object
         char* piece = decode(tokenizer, token, next);
-        safe_printf(piece); // same as printf("%s", piece), but skips "unsafe" bytes
-        fflush(stdout);
+        //safe_printf(piece); // same as printf("%s", piece), but skips "unsafe" bytes
+        //fflush(stdout);
         token = next;
 
         // init the timer here because the first iteration can be slower
@@ -773,10 +778,24 @@ void generate(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler, 
     }
     printf("\n");
 
-    // report achieved tok/s (pos-1 because the timer starts after first iteration)
+    // report achieved tok/s
     if (pos > 1) {
         long end = time_in_ms();
-        fprintf(stderr, "achieved tok/s: %f\n", (pos-1) / (double)(end-start)*1000);
+        long ctx_ntokens = num_prompt_tokens - 1; // Subtract 1 because timer starts after 1st iter
+        long gen_ntokens = pos - num_prompt_tokens;
+        long ctx_time_in_ms = (ctx-start);
+        long gen_time_in_ms = (end-ctx);
+        double ctx_throughput = ctx_ntokens / (double) ctx_time_in_ms * 1000;
+        double gen_throughput = gen_ntokens / (double) gen_time_in_ms * 1000;
+
+        // millisecond resolution may not be sufficient for small models / prompts, so guard
+        // against NANs with N/A.
+        fprintf(stderr, "context-encoding tok/s: ");
+        if (ctx_time_in_ms) fprintf(stderr,"%f\n",ctx_throughput);
+        else                fprintf(stderr,"N/A\n");
+        fprintf(stderr, "token-generation tok/s: ");
+        if (gen_time_in_ms) fprintf(stderr,"%f\n",gen_throughput);
+        else                fprintf(stderr,"N/A\n");
     }
 
     free(prompt_tokens);
